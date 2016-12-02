@@ -1,9 +1,11 @@
 package main 
 
 import (
+	// "bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"os/signal"
@@ -30,10 +32,16 @@ var myPeers Peers
 
 func findHost(a string) string {
 	pos := strings.Index(a, ":")
+	var host string
 	if pos > 0 {
-		return a[:pos]
+		host = a[:pos]
+	} else {
+		host = a
 	}
-	return a
+  if host == "localhost" {
+		host = "127.0.0.1"
+	}
+	return host
 }
 
 // HTTP service function:
@@ -47,7 +55,7 @@ func hello(w http.ResponseWriter, r *http.Request) {
 	newGuy := findHost(r.RemoteAddr)
   myPeers.Hosts = append(myPeers.Hosts, newGuy)
 	found := false
-	for i := len(myPeers.Hosts)-2; i >= 0; i-- {
+	for i := len(myPeers.Hosts) - 2; i >= 0; i-- {
 		if myPeers.Hosts[i] == newGuy {
 			myPeers.PortOffsets = append(myPeers.PortOffsets,
 			                             myPeers.PortOffsets[i] + 1)
@@ -72,6 +80,7 @@ func hello(w http.ResponseWriter, r *http.Request) {
 var agentLaunch bool = false
 
 func agentLauncher() {
+	fmt.Println("Launching agent and coordinator and dbserver...")
 }
 
 // Stuff for the signal handling:
@@ -100,6 +109,14 @@ func main() {
 	if len(os.Args) > 1 {
     // The argument is the address of a host
 		fmt.Println("Contacting peers...")
+		peerAddress := os.Args[1]
+		r, e := http.Get("http://" + peerAddress + ":" + strconv.Itoa(port) +
+	                   "/hello")
+		fmt.Println(r, e)
+		defer r.Body.Close()
+		body, e := ioutil.ReadAll(r.Body)
+		fmt.Println("Body:", string(body), e)
+		json.Unmarshal(body, &myPeers)
 	}
 
 	// Permanent loop:
