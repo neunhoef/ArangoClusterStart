@@ -3,6 +3,7 @@ package main
 import (
 	// "bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -18,12 +19,14 @@ import (
 
 var agencySize int = 3
 var port int = 8529
+var workDir string = "./ArangoDBdata/"
 
 // State of peers:
 
 type Peers struct {
 	Hosts []string
   PortOffsets []int
+	AgencySize int
 }
 
 var myPeers Peers
@@ -96,6 +99,25 @@ func handleSignal() {
 }
 
 func main() {
+	// Command line arguments:
+	flag.IntVar(&agencySize, "agencySize", 3, "number of agents in agency")
+  flag.IntVar(&port, "port", 8529, "port for arangodb launcher")
+	flag.StringVar(&workDir, "workDir", "./ArangoDBdata/", "working directory")
+	flag.Parse()
+
+	// Sort out work directory:
+	if len(workDir) == 0 {
+		workDir = "./ArangoDBdata/"
+	}
+	if workDir[len(workDir)-1] != '/' {
+		workDir = workDir + "/"
+	}
+	err := os.MkdirAll(workDir, 0755)
+	if err != nil {
+		fmt.Println("Cannot create working directory", workDir, ", giving up.")
+		return
+	}
+
 	// Interrupt signal:
 	sigChannel = make(chan os.Signal)
 	signal.Notify(sigChannel, os.Interrupt)
@@ -106,10 +128,11 @@ func main() {
 	go http.ListenAndServe("0.0.0.0:" + strconv.Itoa(port), nil)
 
 	// Do we have to register?
-	if len(os.Args) > 1 {
+	args := flag.Args()
+	if len(args) > 0 {
     // The argument is the address of a host
 		fmt.Println("Contacting peers...")
-		peerAddress := os.Args[1]
+		peerAddress := args[0]
 		r, e := http.Get("http://" + peerAddress + ":" + strconv.Itoa(port) +
 	                   "/hello")
 		fmt.Println(r, e)
