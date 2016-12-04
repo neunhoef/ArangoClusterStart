@@ -1,7 +1,7 @@
-package main 
+package main
 
 import (
-	// "bytes"
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -21,12 +21,25 @@ var agencySize int = 3
 var port int = 8529
 var workDir string = "./ArangoDBdata/"
 
+// Overall state:
+
+const (
+	STATE_START   int = iota // initial state after start
+	STATE_MASTER  int = iota // finding phase, first instance
+	STATE_SLAVE   int = iota // finding phase, further instances
+	STATE_RUNNING int = iota // running phase
+)
+
+var state int = STATE_START
+var starter chan bool = make(chan bool)
+
 // State of peers:
 
 type Peers struct {
-	Hosts []string
-  PortOffsets []int
-	AgencySize int
+	Hosts       []string
+	PortOffsets []int
+	MyIndex     int
+	AgencySize  int
 }
 
 var myPeers Peers
@@ -41,7 +54,7 @@ func findHost(a string) string {
 	} else {
 		host = a
 	}
-  if host == "localhost" {
+	if host == "localhost" {
 		host = "127.0.0.1"
 	}
 	return host
@@ -50,40 +63,46 @@ func findHost(a string) string {
 // HTTP service function:
 
 func hello(w http.ResponseWriter, r *http.Request) {
-	if len(myPeers.Hosts) == 0 {
-    myself := findHost(r.Host)
-		myPeers.Hosts = append(myPeers.Hosts, myself)
-	  myPeers.PortOffsets = append(myPeers.PortOffsets, 0)
+	if state == STATE_SLAVE {
+    header := w.Header()
+		header.Add("Location", "http://" + myPeers.Hosts[0] + ":" +
+		                       strconv.Itoa(port) + "/hello")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+		return
 	}
-	newGuy := findHost(r.RemoteAddr)
-  myPeers.Hosts = append(myPeers.Hosts, newGuy)
-	found := false
-	for i := len(myPeers.Hosts) - 2; i >= 0; i-- {
-		if myPeers.Hosts[i] == newGuy {
-			myPeers.PortOffsets = append(myPeers.PortOffsets,
-			                             myPeers.PortOffsets[i] + 1)
-      found = true
-			break
+	if len(myPeers.Hosts) == 0 {
+		myself := findHost(r.Host)
+		myPeers.Hosts = append(myPeers.Hosts, myself)
+		myPeers.PortOffsets = append(myPeers.PortOffsets, 0)
+		myPeers.AgencySize = agencySize
+		myPeers.MyIndex = 0
+	}
+	if state == STATE_MASTER && r.Method == "POST" {
+		newGuy := findHost(r.RemoteAddr)
+		myPeers.Hosts = append(myPeers.Hosts, newGuy)
+		found := false
+		for i := len(myPeers.Hosts) - 2; i >= 0; i-- {
+			if myPeers.Hosts[i] == newGuy {
+				myPeers.PortOffsets = append(myPeers.PortOffsets,
+					myPeers.PortOffsets[i]+1)
+				found = true
+				break
+			}
+		}
+		if !found {
+			myPeers.PortOffsets = append(myPeers.PortOffsets, 0)
+		}
+		fmt.Println("New peers:", myPeers)
+		if len(myPeers.Hosts) >= agencySize {
+			starter <- true
 		}
 	}
-	if !found {
-		myPeers.PortOffsets = append(myPeers.PortOffsets, 0)
-	}
-	fmt.Println("Peers:", myPeers)
 	b, e := json.Marshal(myPeers)
 	if e != nil {
-		io.WriteString(w, "Hello world! Your address is:" + r.RemoteAddr)
+		io.WriteString(w, "Hello world! Your address is:"+r.RemoteAddr)
 	} else {
 		w.Write(b)
 	}
-}
-
-// Launching an agent:
-
-var agentLaunch bool = false
-
-func agentLauncher() {
-	fmt.Println("Launching agent and coordinator and dbserver...")
 }
 
 // Stuff for the signal handling:
@@ -98,10 +117,93 @@ func handleSignal() {
 	}
 }
 
+func startRunning() {
+	// Basically keep subprocesses running
+	for {
+		fmt.Println("Making sure that services run...")
+		time.Sleep(1000000000)
+		if stop {
+			break
+		}
+	}
+}
+
+func saveSetup() {
+	f, e := os.Create(workDir + "setup.json")
+	defer f.Close()
+  if e != nil {
+		fmt.Println("Error writing setup:", e)
+		return
+	}
+	b, e := json.Marshal(myPeers)
+	if e != nil {
+		fmt.Println("Cannot serialize myPeers:", e)
+		return
+	}
+	f.Write(b)
+}
+
+func startSlave(peerAddress string) {
+	fmt.Println("Contacting master...")
+	buf := bytes.Buffer{}
+	io.WriteString(&buf, "{}")
+	r, e := http.Post("http://" + peerAddress + ":" + strconv.Itoa(port) +
+		"/hello", "application/json", &buf)
+	body, e := ioutil.ReadAll(r.Body)
+	r.Body.Close()
+	fmt.Println("Body:", string(body), e)
+	json.Unmarshal(body, &myPeers)
+	myPeers.MyIndex = len(myPeers.Hosts) - 1
+	agencySize = myPeers.AgencySize
+
+	// Wait until we can start:
+	for {
+		if len(myPeers.Hosts) >= agencySize {
+			fmt.Println("Starting running service...")
+			saveSetup()
+			state = STATE_RUNNING
+			startRunning()
+			return
+		}
+		fmt.Println("Waiting for enough servers to show up...")
+		time.Sleep(1000000000)
+		r, e = http.Get("http://" + myPeers.Hosts[0] + ":" + strconv.Itoa(port) +
+			"/hello")
+		body, e = ioutil.ReadAll(r.Body)
+		r.Body.Close()
+		fmt.Println("Body2:", string(body), e)
+    var newPeers Peers
+		json.Unmarshal(body, &newPeers)
+		myPeers.Hosts = newPeers.Hosts
+		myPeers.PortOffsets = newPeers.PortOffsets
+	}
+}
+
+func startMaster() {
+	// Permanent loop:
+	for {
+		fmt.Println("Serving as master, number of peers:", len(myPeers.Hosts))
+		time.Sleep(1000000000)
+		select {
+	  case <- starter:
+			saveSetup()
+			fmt.Println("Starting running service...")
+			state = STATE_RUNNING
+			startRunning()
+			return
+		default:
+			fmt.Println("Nothing received from channel.")
+		}
+		if stop {
+			break
+		}
+	}
+}
+
 func main() {
 	// Command line arguments:
 	flag.IntVar(&agencySize, "agencySize", 3, "number of agents in agency")
-  flag.IntVar(&port, "port", 8529, "port for arangodb launcher")
+	flag.IntVar(&port, "port", 8529, "port for arangodb launcher")
 	flag.StringVar(&workDir, "workDir", "./ArangoDBdata/", "working directory")
 	flag.Parse()
 
@@ -125,33 +227,31 @@ func main() {
 
 	// HTTP service:
 	http.HandleFunc("/hello", hello)
-	go http.ListenAndServe("0.0.0.0:" + strconv.Itoa(port), nil)
+	go http.ListenAndServe("0.0.0.0:"+strconv.Itoa(port), nil)
+
+	// Is this a new start or a restart?
+  setupFile, err := os.Open(workDir + "setup.json")
+	if err == nil {
+		// Could read file
+	  setup, err := ioutil.ReadAll(setupFile)
+    setupFile.Close()
+		if err == nil {
+			err = json.Unmarshal(setup, &myPeers)
+			if err == nil {
+				state = STATE_RUNNING
+				startRunning()
+				return
+			}
+	  }
+	}
 
 	// Do we have to register?
 	args := flag.Args()
 	if len(args) > 0 {
-    // The argument is the address of a host
-		fmt.Println("Contacting peers...")
-		peerAddress := args[0]
-		r, e := http.Get("http://" + peerAddress + ":" + strconv.Itoa(port) +
-	                   "/hello")
-		fmt.Println(r, e)
-		defer r.Body.Close()
-		body, e := ioutil.ReadAll(r.Body)
-		fmt.Println("Body:", string(body), e)
-		json.Unmarshal(body, &myPeers)
-	}
-
-	// Permanent loop:
-	for {
-		fmt.Println("Alive")
-		time.Sleep(1000000000)
-		if !agentLaunch && len(myPeers.Hosts) >= agencySize {
-			go agentLauncher()
-			agentLaunch = true
-		}
-		if stop {
-			break
-		}
+		state = STATE_SLAVE
+		startSlave(args[0])
+	} else {
+		state = STATE_MASTER
+		startMaster()
 	}
 }
