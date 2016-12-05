@@ -26,7 +26,7 @@ a dbserver
 Options: 
 
     -directory <place for datadirectories>
-     Default: ./ArangoDBData
+     Default: .
     -port <port>
      Default: 8529
     -executable <path>

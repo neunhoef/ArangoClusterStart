@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -17,9 +18,15 @@ import (
 
 // Configuration data:
 
-var agencySize int = 3
-var port int = 8529
-var workDir string = "./ArangoDBdata/"
+const (
+	agencySizeDefault int = 3
+	portDefault int       = 4000
+	workDirDefault string = "./"
+)
+
+var agencySize int
+var port int
+var workDir string
 
 // Overall state:
 
@@ -38,6 +45,7 @@ var starter chan bool = make(chan bool)
 type Peers struct {
 	Hosts       []string
 	PortOffsets []int
+	Directories []string
 	MyIndex     int
 	AgencySize  int
 }
@@ -74,23 +82,39 @@ func hello(w http.ResponseWriter, r *http.Request) {
 		myself := findHost(r.Host)
 		myPeers.Hosts = append(myPeers.Hosts, myself)
 		myPeers.PortOffsets = append(myPeers.PortOffsets, 0)
+		myPeers.Directories = append(myPeers.Directories, workDir)
 		myPeers.AgencySize = agencySize
 		myPeers.MyIndex = 0
 	}
 	if state == STATE_MASTER && r.Method == "POST" {
+		var newPeer Peers
+		body, _ := ioutil.ReadAll(r.Body)
+		r.Body.Close()
+		fmt.Println("Received body:", string(body))
+		json.Unmarshal(body, &newPeer)
+		peerDir := newPeer.Directories[0]
+
 		newGuy := findHost(r.RemoteAddr)
-		myPeers.Hosts = append(myPeers.Hosts, newGuy)
 		found := false
-		for i := len(myPeers.Hosts) - 2; i >= 0; i-- {
+		fmt.Println("Guck:", myPeers, peerDir, newGuy)
+		for i := len(myPeers.Hosts) - 1; i >= 0; i-- {
 			if myPeers.Hosts[i] == newGuy {
+				if myPeers.Directories[i] == peerDir {
+					w.WriteHeader(http.StatusBadRequest)
+					io.WriteString(w, `{"error": "Cannot use same directory as peer."}`)
+					return
+				}
 				myPeers.PortOffsets = append(myPeers.PortOffsets,
-					myPeers.PortOffsets[i]+1)
+					myPeers.PortOffsets[i] + 1)
+				myPeers.Directories = append(myPeers.Directories, peerDir)
 				found = true
 				break
 			}
 		}
+		myPeers.Hosts = append(myPeers.Hosts, newGuy)
 		if !found {
 			myPeers.PortOffsets = append(myPeers.PortOffsets, 0)
+			myPeers.Directories = append(myPeers.Directories, newPeer.Directories[0])
 		}
 		fmt.Println("New peers:", myPeers)
 		if len(myPeers.Hosts) >= agencySize {
@@ -145,14 +169,23 @@ func saveSetup() {
 
 func startSlave(peerAddress string) {
 	fmt.Println("Contacting master...")
+	b, _ := json.Marshal(Peers{Directories: []string{workDir}})
 	buf := bytes.Buffer{}
-	io.WriteString(&buf, "{}")
+	buf.Write(b)
 	r, e := http.Post("http://" + peerAddress + ":" + strconv.Itoa(port) +
 		"/hello", "application/json", &buf)
-	body, e := ioutil.ReadAll(r.Body)
+	if e != nil || r.StatusCode != http.StatusOK {
+		fmt.Println("Cannot start because of error from master:", e, r.StatusCode)
+		return
+	}
+	body, _ := ioutil.ReadAll(r.Body)
 	r.Body.Close()
 	fmt.Println("Body:", string(body), e)
-	json.Unmarshal(body, &myPeers)
+	e = json.Unmarshal(body, &myPeers)
+	if e != nil {
+		fmt.Println("Cannot parse body from master:", e)
+		return
+	}
 	myPeers.MyIndex = len(myPeers.Hosts) - 1
 	agencySize = myPeers.AgencySize
 
@@ -202,17 +235,19 @@ func startMaster() {
 
 func main() {
 	// Command line arguments:
-	flag.IntVar(&agencySize, "agencySize", 3, "number of agents in agency")
-	flag.IntVar(&port, "port", 8529, "port for arangodb launcher")
-	flag.StringVar(&workDir, "workDir", "./ArangoDBdata/", "working directory")
+	flag.IntVar(&agencySize, "agencySize", agencySizeDefault,
+	            "number of agents in agency")
+	flag.IntVar(&port, "port", portDefault, "port for arangodb launcher")
+	flag.StringVar(&workDir, "workDir", workDirDefault, "working directory")
 	flag.Parse()
 
 	// Sort out work directory:
 	if len(workDir) == 0 {
-		workDir = "./ArangoDBdata/"
+		workDir = workDirDefault
 	}
-	if workDir[len(workDir)-1] != '/' {
-		workDir = workDir + "/"
+	workDir, _ = filepath.Abs(workDir)
+	if workDir[len(workDir)-1] != os.PathSeparator {
+		workDir = workDir + string(os.PathSeparator)
 	}
 	err := os.MkdirAll(workDir, 0755)
 	if err != nil {
