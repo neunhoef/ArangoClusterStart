@@ -22,11 +22,15 @@ const (
 	agencySizeDefault int = 3
 	portDefault int       = 4000
 	workDirDefault string = "./"
+	arangodExecutableDefault string = "/usr/sbin/arangod"
+	arangodJSstartupDefault string = "/usr/share/arangodb3/js"
 )
 
 var agencySize int
 var port int
 var workDir string
+var arangodExecutable string
+var arangodJSstartup string
 
 // Overall state:
 
@@ -142,13 +146,135 @@ func handleSignal() {
 }
 
 func startRunning() {
-	// Basically keep subprocesses running
+	myAddress := myPeers.Hosts[myPeers.MyIndex] + ":"
+	portOffset := myPeers.PortOffsets[myPeers.MyIndex]
+	var myPort string
+	var myDir string
+  var args []string
+
+	// Start agent:
+  var agentProc *os.Process
+	var err error
+	if myPeers.MyIndex < agencySize {
+		myPort = strconv.Itoa(4001 + portOffset)
+		myDir = workDir + "agent" + myPort + string(os.PathSeparator)
+		os.MkdirAll(myDir + "data", 0755)
+		os.MkdirAll(myDir + "apps", 0755)
+		args = make([]string, 0, 30)
+		args = append(args,
+			arangodExecutable,
+			"-c", "none",
+			"--agency.activate", "true",
+			"--server.endpoint", "tcp://0.0.0.0:" + myPort,
+			"--agency.my-address", "tcp://" + myAddress + myPort,
+			"--agency.size", strconv.Itoa(agencySize),
+			"--agency.supervision", "true",
+			"--database.directory", myDir + "data",
+			"--foxx.queues", "false",
+			"--javascript.startup-directory", arangodJSstartup,
+			"--javascript.app-path", myDir + "apps",
+			"--server.statistics", "false",
+			"--server.threads", "8",
+			"--log.file", myDir + "arangod.log",
+			"--server.authentication", "false")
+    for i := 0; i < agencySize; i++ {
+			if i != myPeers.MyIndex {
+				args = append(args,
+					"--agency.endpoint",
+					"tcp://" + myPeers.Hosts[i] + ":" +
+					strconv.Itoa(4001 + myPeers.PortOffsets[i]))
+			}
+		}
+		agentProc, err = os.StartProcess(arangodExecutable, args,
+			&os.ProcAttr{"", nil, []*os.File{os.Stdin, os.Stdout, os.Stderr}, nil})
+		if err != nil {
+			fmt.Println("Error whilst starting agent:", err)
+		}
+	}
+
+	// Start DBserver:
+	myPort = strconv.Itoa(8629 + portOffset)
+	myDir = workDir + "dbserver" + myPort + string(os.PathSeparator)
+	os.MkdirAll(myDir + "data", 0755)
+	os.MkdirAll(myDir + "apps", 0755)
+	args = make([]string, 0, 30)
+	args = append(args,
+		arangodExecutable,
+		"-c", "none",
+		"--database.directory", myDir + "data",
+		"--server.endpoint", "tcp://0.0.0.0:" + myPort,
+		"--cluster.my-address", "tcp://" + myAddress + myPort,
+		"--cluster.my-role", "PRIMARY",
+		"--cluster.my-local-info", myAddress + myPort,
+		"--foxx.queues", "false",
+		"--javascript.startup-directory", arangodJSstartup,
+		"--javascript.app-path", myDir + "apps",
+		"--server.statistics", "true",
+		"--server.threads", "8",
+		"--log.file", myDir + "arangod.log",
+		"--server.authentication", "false")
+	for i := 0; i < agencySize; i++ {
+		args = append(args,
+			"--cluster.agency-endpoint",
+			"tcp://" + myPeers.Hosts[i] + ":" +
+			strconv.Itoa(4001 + myPeers.PortOffsets[i]))
+	}
+	dbserverProc, err := os.StartProcess(arangodExecutable, args,
+		&os.ProcAttr{"", nil, []*os.File{os.Stdin, os.Stdout, os.Stderr}, nil})
+	if err != nil {
+		fmt.Println("Error whilst starting dbserver:", err)
+	}
+
+	// Start Coordinator:
+	myPort = strconv.Itoa(8530 + portOffset)
+	myDir = workDir + "coordinator" + myPort + string(os.PathSeparator)
+	os.MkdirAll(myDir + "data", 0755)
+	os.MkdirAll(myDir + "apps", 0755)
+	args = make([]string, 0, 30)
+	args = append(args,
+		arangodExecutable,
+		"-c", "none",
+		"--database.directory", myDir + "data",
+		"--server.endpoint", "tcp://0.0.0.0:" + myPort,
+		"--cluster.my-address", "tcp://" + myAddress + myPort,
+		"--cluster.my-role", "COORDINATOR",
+		"--cluster.my-local-info", myAddress + myPort,
+		"--foxx.queues", "true",
+		"--javascript.startup-directory", arangodJSstartup,
+		"--javascript.app-path", myDir + "apps",
+		"--server.statistics", "true",
+		"--server.threads", "16",
+		"--log.file", myDir + "arangod.log",
+		"--server.authentication", "false")
+	for i := 0; i < agencySize; i++ {
+		args = append(args,
+			"--cluster.agency-endpoint",
+			"tcp://" + myPeers.Hosts[i] + ":" +
+			strconv.Itoa(4001 + myPeers.PortOffsets[i]))
+	}
+	coordinatorProc, err := os.StartProcess(arangodExecutable, args,
+		&os.ProcAttr{"", nil, []*os.File{os.Stdin, os.Stdout, os.Stderr}, nil})
+	if err != nil {
+		fmt.Println("Error whilst starting coordinator:", err)
+	}
+
 	for {
-		fmt.Println("Making sure that services run...")
 		time.Sleep(1000000000)
 		if stop {
 			break
 		}
+	}
+
+	fmt.Println("Shutting down services...")
+  if coordinatorProc != nil {
+		coordinatorProc.Kill()
+	}
+	if dbserverProc != nil {
+		dbserverProc.Kill()
+	}
+	time.Sleep(3000000000)
+	if agentProc != nil {
+		agentProc.Kill()
 	}
 }
 
@@ -239,6 +365,10 @@ func main() {
 	            "number of agents in agency")
 	flag.IntVar(&port, "port", portDefault, "port for arangodb launcher")
 	flag.StringVar(&workDir, "workDir", workDirDefault, "working directory")
+	flag.StringVar(&arangodExecutable, "arangod", arangodExecutableDefault,
+	               "path to arangod executable")
+	flag.StringVar(&arangodJSstartup, "jsdir", arangodJSstartupDefault,
+	               "path to JS library directory")
 	flag.Parse()
 
 	// Sort out work directory:
