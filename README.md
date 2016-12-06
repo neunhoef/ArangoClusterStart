@@ -25,18 +25,14 @@ a dbserver
 
 Options: 
 
-    -directory <place for datadirectories>
+    -workDir <place for datadirectories>
      Default: .
     -port <port>
      Default: 8529
-    -executable <path>
+    -arangod <path>
      Default: /usr/sbin/arangod, depending on OS
-    -library <lib>
-     Default: /usr/share/arangodb
-    -configuration <conf>
-     Default: /etc/arangodb3/arangod.conf
-    -log <logdir>
-     Default: ./ArangoDBData/arangodb.log
+    -jsdir <lib>
+     Default: /usr/share/arangodb3/js
     -agencySize <size>
      Default: 3, Servers start as soon as agency is ready
     -coordinator <bool>
