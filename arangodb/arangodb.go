@@ -16,27 +16,17 @@ import (
 	"time"
 )
 
-// Configuration data:
+// Configuration data with defaults:
 
-const (
-	agencySizeDefault        int    = 3
-	portDefault              int    = 4000
-	workDirDefault           string = "./"
-	arangodExecutableDefault string = "/usr/sbin/arangod"
-	arangodJSstartupDefault  string = "/usr/share/arangodb3/js"
-	startCoordinatorDefault  bool   = true
-	startDBserverDefault     bool   = true
-	rrPathDefault            string = ""
-)
-
-var agencySize int
-var port int
-var workDir string
-var arangodExecutable string
-var arangodJSstartup string
-var startCoordinator bool
-var startDBserver bool
-var rrPath string
+var agencySize int = 3
+var arangodExecutable string = "/usr/sbin/arangod"
+var arangodJSstartup string = "/usr/share/arangodb3/js"
+var logLevel string = "INFO"
+var port int = 4000
+var rrPath string = ""
+var startCoordinator bool = true
+var startDBserver bool = true
+var workDir string = "./"
 
 // Overall state:
 
@@ -125,8 +115,9 @@ func hello(w http.ResponseWriter, r *http.Request) {
 			myPeers.PortOffsets = append(myPeers.PortOffsets, 0)
 			myPeers.Directories = append(myPeers.Directories, newPeer.Directories[0])
 		}
-		fmt.Println("New peers:", myPeers)
-		if len(myPeers.Hosts) >= agencySize {
+		fmt.Println("New peer:", newGuy+", portOffset: "+
+			strconv.Itoa(myPeers.PortOffsets[len(myPeers.PortOffsets)-1]))
+		if len(myPeers.Hosts) == agencySize {
 			starter <- true
 		}
 	}
@@ -150,7 +141,77 @@ func handleSignal() {
 	}
 }
 
+func makeBaseArgs(myDir string, myAddress string, myPort string,
+	mode string) (args []string) {
+	args = make([]string, 0, 40)
+	if rrPath != "" {
+		args = append(args, rrPath)
+	}
+	args = append(args,
+		arangodExecutable,
+		"-c", "none",
+		"--server.endpoint", "tcp://0.0.0.0:"+myPort,
+		"--database.directory", myDir+"data",
+		"--javascript.startup-directory", arangodJSstartup,
+		"--javascript.app-path", myDir+"apps",
+		"--log.file", myDir+"arangod.log",
+		"--log.level", logLevel,
+		"--log.force-direct", "false",
+		"--server.authentication", "false",
+	)
+	switch mode {
+	case "agency":
+		args = append(args,
+			"--agency.activate", "true",
+			"--agency.my-address", "tcp://"+myAddress+myPort,
+			"--agency.size", strconv.Itoa(agencySize),
+			"--agency.supervision", "true",
+			"--foxx.queues", "false",
+			"--javascript.v8-contexts", "1",
+			"--server.statistics", "false",
+			"--server.threads", "8",
+		)
+		for i := 0; i < agencySize; i++ {
+			if i != myPeers.MyIndex {
+				args = append(args,
+					"--agency.endpoint",
+					"tcp://"+myPeers.Hosts[i]+":"+
+						strconv.Itoa(4001+myPeers.PortOffsets[i]))
+			}
+		}
+	case "dbserver":
+		args = append(args,
+			"--cluster.my-address", "tcp://"+myAddress+myPort,
+			"--cluster.my-role", "PRIMARY",
+			"--cluster.my-local-info", myAddress+myPort,
+			"--foxx.queues", "false",
+			"--javascript.v8-contexts", "4",
+			"--server.statistics", "true",
+		)
+	case "coordinator":
+		args = append(args,
+			"--cluster.my-address", "tcp://"+myAddress+myPort,
+			"--cluster.my-role", "COORDINATOR",
+			"--cluster.my-local-info", myAddress+myPort,
+			"--foxx.queues", "true",
+			"--javascript.v8-contexts", "4",
+			"--server.statistics", "true",
+			"--server.threads", "16",
+		)
+	}
+	if mode != "agency" {
+		for i := 0; i < agencySize; i++ {
+			args = append(args,
+				"--cluster.agency-endpoint",
+				"tcp://"+myPeers.Hosts[i]+":"+
+					strconv.Itoa(4001+myPeers.PortOffsets[i]))
+		}
+	}
+	return
+}
+
 func startRunning() {
+	state = STATE_RUNNING
 	myAddress := myPeers.Hosts[myPeers.MyIndex] + ":"
 	portOffset := myPeers.PortOffsets[myPeers.MyIndex]
 	var myPort string
@@ -160,49 +221,20 @@ func startRunning() {
 	// Start agent:
 	var agentProc *os.Process
 	var err error
+	var executable string
+	if rrPath != "" {
+		executable = rrPath
+	} else {
+		executable = arangodExecutable
+	}
 	if myPeers.MyIndex < agencySize {
 		myPort = strconv.Itoa(4001 + portOffset)
 		myDir = workDir + "agent" + myPort + string(os.PathSeparator)
 		os.MkdirAll(myDir+"data", 0755)
 		os.MkdirAll(myDir+"apps", 0755)
-		args = make([]string, 0, 30)
-		if rrPath != "" {
-			args = append(args, rrPath)
-		}
-		args = append(args,
-			arangodExecutable,
-			"-c", "none",
-			"--agency.activate", "true",
-			"--server.endpoint", "tcp://0.0.0.0:"+myPort,
-			"--agency.my-address", "tcp://"+myAddress+myPort,
-			"--agency.size", strconv.Itoa(agencySize),
-			"--agency.supervision", "true",
-			"--database.directory", myDir+"data",
-			"--foxx.queues", "false",
-			"--javascript.startup-directory", arangodJSstartup,
-			"--javascript.app-path", myDir+"apps",
-			//"--javascript.v8-contexts", "1",
-			"--server.statistics", "false",
-			"--server.threads", "16",
-			"--log.file", myDir+"arangod.log",
-			"--log.level=agency=debug",
-			"--log.force-direct", "true",
-			"--server.authentication", "false")
-		for i := 0; i < agencySize; i++ {
-			if i != myPeers.MyIndex {
-				args = append(args,
-					"--agency.endpoint",
-					"tcp://"+myPeers.Hosts[i]+":"+
-						strconv.Itoa(4001+myPeers.PortOffsets[i]))
-			}
-		}
-		if rrPath != "" {
-			agentProc, err = os.StartProcess(rrPath, args,
-				&os.ProcAttr{"", nil, []*os.File{os.Stdin, nil, nil}, nil})
-		} else {
-			agentProc, err = os.StartProcess(arangodExecutable, args,
-				&os.ProcAttr{"", nil, []*os.File{os.Stdin, nil, nil}, nil})
-		}
+		args = makeBaseArgs(myDir, myAddress, myPort, "agency")
+		agentProc, err = os.StartProcess(executable, args,
+			&os.ProcAttr{"", nil, []*os.File{os.Stdin, nil, nil}, nil})
 		if err != nil {
 			fmt.Println("Error whilst starting agent:", err)
 		}
@@ -215,35 +247,9 @@ func startRunning() {
 		myDir = workDir + "dbserver" + myPort + string(os.PathSeparator)
 		os.MkdirAll(myDir+"data", 0755)
 		os.MkdirAll(myDir+"apps", 0755)
-		args = make([]string, 0, 30)
-		args = append(args,
-			arangodExecutable,
-			"-c", "none",
-			"--database.directory", myDir+"data",
-			"--server.endpoint", "tcp://0.0.0.0:"+myPort,
-			"--cluster.my-address", "tcp://"+myAddress+myPort,
-			"--cluster.my-role", "PRIMARY",
-			"--cluster.my-local-info", myAddress+myPort,
-			"--foxx.queues", "false",
-			"--javascript.startup-directory", arangodJSstartup,
-			"--javascript.app-path", myDir+"apps",
-			"--server.statistics", "true",
-			"--server.threads", "8",
-			"--log.file", myDir+"arangod.log",
-			"--server.authentication", "false")
-		for i := 0; i < agencySize; i++ {
-			args = append(args,
-				"--cluster.agency-endpoint",
-				"tcp://"+myPeers.Hosts[i]+":"+
-					strconv.Itoa(4001+myPeers.PortOffsets[i]))
-		}
-		if rrPath != "" {
-			dbserverProc, err = os.StartProcess(rrPath, args,
-				&os.ProcAttr{"", nil, []*os.File{os.Stdin, nil, nil}, nil})
-		} else {
-			dbserverProc, err = os.StartProcess(arangodExecutable, args,
-				&os.ProcAttr{"", nil, []*os.File{os.Stdin, nil, nil}, nil})
-		}
+		args = makeBaseArgs(myDir, myAddress, myPort, "dbserver")
+		dbserverProc, err = os.StartProcess(executable, args,
+			&os.ProcAttr{"", nil, []*os.File{os.Stdin, nil, nil}, nil})
 		if err != nil {
 			fmt.Println("Error whilst starting dbserver:", err)
 		}
@@ -256,35 +262,9 @@ func startRunning() {
 		myDir = workDir + "coordinator" + myPort + string(os.PathSeparator)
 		os.MkdirAll(myDir+"data", 0755)
 		os.MkdirAll(myDir+"apps", 0755)
-		args = make([]string, 0, 30)
-		args = append(args,
-			arangodExecutable,
-			"-c", "none",
-			"--database.directory", myDir+"data",
-			"--server.endpoint", "tcp://0.0.0.0:"+myPort,
-			"--cluster.my-address", "tcp://"+myAddress+myPort,
-			"--cluster.my-role", "COORDINATOR",
-			"--cluster.my-local-info", myAddress+myPort,
-			"--foxx.queues", "true",
-			"--javascript.startup-directory", arangodJSstartup,
-			"--javascript.app-path", myDir+"apps",
-			"--server.statistics", "true",
-			"--server.threads", "16",
-			"--log.file", myDir+"arangod.log",
-			"--server.authentication", "false")
-		for i := 0; i < agencySize; i++ {
-			args = append(args,
-				"--cluster.agency-endpoint",
-				"tcp://"+myPeers.Hosts[i]+":"+
-					strconv.Itoa(4001+myPeers.PortOffsets[i]))
-		}
-		if rrPath != "" {
-			coordinatorProc, err = os.StartProcess(rrPath, args,
-				&os.ProcAttr{"", nil, []*os.File{os.Stdin, nil, nil}, nil})
-		} else {
-			coordinatorProc, err = os.StartProcess(arangodExecutable, args,
-				&os.ProcAttr{"", nil, []*os.File{os.Stdin, nil, nil}, nil})
-		}
+		args = makeBaseArgs(myDir, myAddress, myPort, "coordinator")
+		coordinatorProc, err = os.StartProcess(executable, args,
+			&os.ProcAttr{"", nil, []*os.File{os.Stdin, nil, nil}, nil})
 		if err != nil {
 			fmt.Println("Error whilst starting coordinator:", err)
 		}
@@ -338,7 +318,7 @@ func startSlave(peerAddress string) {
 	}
 	body, _ := ioutil.ReadAll(r.Body)
 	r.Body.Close()
-	//fmt.Println("Body:", string(body), e)
+	fmt.Println("Body:", string(body), e)
 	e = json.Unmarshal(body, &myPeers)
 	if e != nil {
 		fmt.Println("Cannot parse body from master:", e)
@@ -353,7 +333,6 @@ func startSlave(peerAddress string) {
 		if len(myPeers.Hosts) >= agencySize {
 			fmt.Println("Starting running service...")
 			saveSetup()
-			state = STATE_RUNNING
 			startRunning()
 			return
 		}
@@ -379,7 +358,6 @@ func startMaster() {
 		case <-starter:
 			saveSetup()
 			fmt.Println("Starting running service...")
-			state = STATE_RUNNING
 			startRunning()
 			return
 		default:
@@ -392,24 +370,26 @@ func startMaster() {
 
 func main() {
 	// Command line arguments:
-	flag.IntVar(&agencySize, "agencySize", agencySizeDefault,
+	flag.IntVar(&agencySize, "agencySize", agencySize,
 		"number of agents in agency")
-	flag.IntVar(&port, "port", portDefault, "port for arangodb launcher")
-	flag.StringVar(&workDir, "workDir", workDirDefault, "working directory")
-	flag.StringVar(&arangodExecutable, "arangod", arangodExecutableDefault,
+	flag.IntVar(&port, "port", port, "port for arangodb launcher")
+	flag.StringVar(&workDir, "workDir", workDir, "working directory")
+	flag.StringVar(&arangodExecutable, "arangod", arangodExecutable,
 		"path to arangod executable")
-	flag.StringVar(&arangodJSstartup, "jsdir", arangodJSstartupDefault,
+	flag.StringVar(&arangodJSstartup, "jsdir", arangodJSstartup,
 		"path to JS library directory")
-	flag.BoolVar(&startCoordinator, "coordinator", startCoordinatorDefault,
+	flag.BoolVar(&startCoordinator, "coordinator", startCoordinator,
 		"start a coordinator instance")
-	flag.BoolVar(&startDBserver, "dbserver", startDBserverDefault,
+	flag.BoolVar(&startDBserver, "dbserver", startDBserver,
 		"start a dbserver instance")
-	flag.StringVar(&rrPath, "rr", rrPathDefault, "path to rr executable to use")
+	flag.StringVar(&rrPath, "rr", rrPath, "path to rr executable to use")
+	flag.StringVar(&logLevel, "loglevel", logLevel,
+		"log level (ERROR, INFO, DEBUG, TRACE)")
 	flag.Parse()
 
 	// Sort out work directory:
 	if len(workDir) == 0 {
-		workDir = workDirDefault
+		workDir = "./"
 	}
 	workDir, _ = filepath.Abs(workDir)
 	if workDir[len(workDir)-1] != os.PathSeparator {
@@ -439,7 +419,6 @@ func main() {
 		if err == nil {
 			err = json.Unmarshal(setup, &myPeers)
 			if err == nil {
-				state = STATE_RUNNING
 				startRunning()
 				return
 			}
