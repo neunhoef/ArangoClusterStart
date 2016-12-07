@@ -1,11 +1,9 @@
-Sort out 4th and further servers.
-SSL
-authentication
-log-level switching
-Coordinator with console in window?
-Windows Support
-OSX Support
 automatic discovery of installation (find path to executable and library
   from our own position in the file system)
-free port testing?
+Windows Support
+OSX Support
+SSL
+authentication
+Coordinator with console in window?
 test in Docker container
+free port testing?
