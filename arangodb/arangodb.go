@@ -55,15 +55,15 @@ var myPeers Peers
 // A helper function:
 
 func findHost(a string) string {
-	pos := strings.Index(a, ":")
+	pos := strings.LastIndex(a, ":")
 	var host string
 	if pos > 0 {
 		host = a[:pos]
 	} else {
 		host = a
 	}
-	if host == "localhost" {
-		host = "127.0.0.1"
+	if host == "127.0.0.1" || host == "[::1]" {
+		host = "localhost"
 	}
 	return host
 }
