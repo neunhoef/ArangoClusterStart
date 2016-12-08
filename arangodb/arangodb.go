@@ -18,31 +18,31 @@ import (
 
 // Configuration data with defaults:
 
-var agencySize int = 3
-var arangodExecutable string = "/usr/sbin/arangod"
-var arangodJSstartup string = "/usr/share/arangodb3/js"
-var logLevel string = "INFO"
-var port int = 4000
-var rrPath string = ""
-var startCoordinator bool = true
-var startDBserver bool = true
-var workDir string = "./"
+var agencySize = 3
+var arangodExecutable = "/usr/sbin/arangod"
+var arangodJSstartup = "/usr/share/arangodb3/js"
+var logLevel = "INFO"
+var port = 4000
+var rrPath = ""
+var startCoordinator = true
+var startDBserver = true
+var workDir = "./"
 
 // Overall state:
 
 const (
-	STATE_START   int = iota // initial state after start
-	STATE_MASTER  int = iota // finding phase, first instance
-	STATE_SLAVE   int = iota // finding phase, further instances
-	STATE_RUNNING int = iota // running phase
+	stateStart   int = iota // initial state after start
+	stateMaster  int = iota // finding phase, first instance
+	stateSlave   int = iota // finding phase, further instances
+	stateRunning int = iota // running phase
 )
 
-var state int = STATE_START
-var starter chan bool = make(chan bool)
+var state = stateStart
+var starter = make(chan bool)
 
 // State of peers:
 
-type Peers struct {
+type peers struct {
 	Hosts       []string
 	PortOffsets []int
 	Directories []string
@@ -50,7 +50,7 @@ type Peers struct {
 	AgencySize  int
 }
 
-var myPeers Peers
+var myPeers peers
 
 // A helper function:
 
@@ -71,7 +71,7 @@ func findHost(a string) string {
 // HTTP service function:
 
 func hello(w http.ResponseWriter, r *http.Request) {
-	if state == STATE_SLAVE {
+	if state == stateSlave {
 		header := w.Header()
 		header.Add("Location", "http://"+myPeers.Hosts[0]+":"+
 			strconv.Itoa(port)+"/hello")
@@ -87,7 +87,7 @@ func hello(w http.ResponseWriter, r *http.Request) {
 		myPeers.MyIndex = 0
 	}
 	if r.Method == "POST" {
-		var newPeer Peers
+		var newPeer peers
 		body, _ := ioutil.ReadAll(r.Body)
 		r.Body.Close()
 		//fmt.Println("Received body:", string(body))
@@ -215,7 +215,7 @@ func makeBaseArgs(myDir string, myAddress string, myPort string,
 }
 
 func startRunning() {
-	state = STATE_RUNNING
+	state = stateRunning
 	myAddress := myPeers.Hosts[myPeers.MyIndex] + ":"
 	portOffset := myPeers.PortOffsets[myPeers.MyIndex]
 	var myPort string
@@ -311,7 +311,7 @@ func saveSetup() {
 
 func startSlave(peerAddress string) {
 	fmt.Println("Contacting master", peerAddress, "...")
-	b, _ := json.Marshal(Peers{Directories: []string{workDir}})
+	b, _ := json.Marshal(peers{Directories: []string{workDir}})
 	buf := bytes.Buffer{}
 	buf.Write(b)
 	r, e := http.Post("http://"+peerAddress+":"+strconv.Itoa(port)+
@@ -346,7 +346,7 @@ func startSlave(peerAddress string) {
 		body, e = ioutil.ReadAll(r.Body)
 		r.Body.Close()
 		//fmt.Println("Body2:", string(body), e)
-		var newPeers Peers
+		var newPeers peers
 		json.Unmarshal(body, &newPeers)
 		myPeers.Hosts = newPeers.Hosts
 		myPeers.PortOffsets = newPeers.PortOffsets
@@ -432,10 +432,10 @@ func main() {
 	// Do we have to register?
 	args := flag.Args()
 	if len(args) > 0 {
-		state = STATE_SLAVE
+		state = stateSlave
 		startSlave(args[0])
 	} else {
-		state = STATE_MASTER
+		state = stateMaster
 		startMaster()
 	}
 }
