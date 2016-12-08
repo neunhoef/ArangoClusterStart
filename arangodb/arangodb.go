@@ -141,6 +141,10 @@ func handleSignal() {
 	}
 }
 
+func slasher(s string) string {
+	return strings.Replace(s, "\\", "/", -1)
+}
+
 func makeBaseArgs(myDir string, myAddress string, myPort string,
 	mode string) (args []string) {
 	args = make([]string, 0, 40)
@@ -151,10 +155,10 @@ func makeBaseArgs(myDir string, myAddress string, myPort string,
 		arangodExecutable,
 		"-c", "none",
 		"--server.endpoint", "tcp://0.0.0.0:"+myPort,
-		"--database.directory", myDir+"data",
-		"--javascript.startup-directory", arangodJSstartup,
-		"--javascript.app-path", myDir+"apps",
-		"--log.file", myDir+"arangod.log",
+		"--database.directory", slasher(myDir+"data"),
+		"--javascript.startup-directory", slasher(arangodJSstartup),
+		"--javascript.app-path", slasher(myDir+"apps"),
+		"--log.file", slasher(myDir+"arangod.log"),
 		"--log.level", logLevel,
 		"--log.force-direct", "false",
 		"--server.authentication", "false",
