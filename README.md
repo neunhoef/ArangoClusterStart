@@ -4,40 +4,46 @@ On host A:
 
     arangodb
 
-will use port 8529 to wait for colleagues. On host B: (can be same as A):
-Will fire up an agent on A:4001, but not yet a coordinator or dbserver.
-Will persist cluster setup to a file in 
+will use port 4000 to wait for colleagues. On host B: (can be same as A):
 
     arangodb A
 
 will contact A:8529 and register, will send its address B and learn
 port offset 1 if A=B, or 0 if A!=B. On host C: (can be same as A or B):
-Will fire up an agent on B:4001+offset.
 
     arangodb A
 
 will contact A:8529 and register, will send its address C and learn
-port offset for C=A or C=B, or 0 if C is new. Will fire up an agent on
-C:4001+offset.
+port offset for C=A or C=B, or 0 if C is new.
 
-From the moment on when 3 have joined, each will fire up a coordinator and
-a dbserver
+From the moment on when 3 have joined, each will fire up an agent, a 
+coordinator and a dbserver and the cluster is up.
+
+Additional servers can be added in the same way.
+
+If two or more of the `arangodb` instances run on the same machine,
+one has to use the `-workDir` option to let each use a different
+directory.
 
 Options: 
 
     -workDir <place for datadirectories>
      Default: .
-    -port <port>
-     Default: 8529
+    -agencySize <size>
+     Default: 3, Servers start as soon as agency is ready
     -arangod <path>
      Default: /usr/sbin/arangod, depending on OS
     -jsdir <lib>
      Default: /usr/share/arangodb3/js
-    -agencySize <size>
-     Default: 3, Servers start as soon as agency is ready
-    -coordinator <bool>
-     Default: true
-    -dbserver <bool>
-     Default: true
+    -coordinator=<bool>
+     Default: true, start a coordinator
+    -dbserver=<bool>
+     Default: true, start a dbserver
+    -port <port>
+     Default: 4000
+    -loglevel <level>
+     Default: INFO, other possible values: ERROR, DEBUG, TRACE
+    -rr <path-to-rr>
+     Default: "", if non-empty, use rr to be found in this path
 
  
