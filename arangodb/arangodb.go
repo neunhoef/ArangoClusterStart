@@ -430,12 +430,13 @@ func findExecutable() {
 			l, e := d.Readdir(1024)
 			if e == nil {
 				for _, n := range l {
-					fmt.Println("Found name", n.Name())
 					if !n.IsDir() {
 						name := n.Name()
+						fmt.Println("Found name", name)
 						if strings.HasPrefix(name, "ArangoDB3 ") {
-							foundPaths = append(foundPaths, basePath+"/"+name+
+							foundPaths = append(foundPaths, basePath + "/" + name +
 								"/usr/bin/arangod.exe")
+							fmt.Println("foundPaths:", foundPaths)
 						}
 					}
 				}
@@ -449,6 +450,7 @@ func findExecutable() {
 				"to look for executable.")
 		}
 		sort.Sort(sort.Reverse(sort.StringSlice(foundPaths)))
+		fmt.Println("foundPaths2:", foundPaths)
 		pathList = append(pathList, foundPaths...)
 	case "darwin":
 		pathList = append(pathList,
