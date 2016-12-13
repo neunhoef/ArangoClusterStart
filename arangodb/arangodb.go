@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -518,7 +519,7 @@ func main() {
 
 	// Interrupt signal:
 	sigChannel = make(chan os.Signal)
-	signal.Notify(sigChannel, os.Interrupt)
+	signal.Notify(sigChannel, os.Interrupt, syscall.SIGTERM)
 	go handleSignal()
 
 	// HTTP service:
