@@ -433,7 +433,8 @@ func findExecutable() {
 					if n.IsDir() {
 						name := n.Name()
 						fmt.Println("Found name", name)
-						if strings.HasPrefix(name, "ArangoDB3 ") {
+						if strings.HasPrefix(name, "ArangoDB3 ") ||
+						   strings.HasPrefix(name, "ArangoDB3e ") {
 							foundPaths = append(foundPaths, basePath + "/" + name +
 								"/usr/bin/arangod.exe")
 							fmt.Println("foundPaths:", foundPaths)
