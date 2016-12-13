@@ -1,5 +1,4 @@
     Ctrl-C handling on Windows
-    kill -TERM handling on Linux and possibly Windows
     kill -TERM handling on OSX
     nicer output, including when cluster is ready
     Use docker image if on Linux

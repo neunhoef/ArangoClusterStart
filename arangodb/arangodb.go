@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"flag"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -24,12 +24,14 @@ import (
 var agencySize = 3
 var arangodExecutable = "/usr/sbin/arangod"
 var arangodJSstartup = "/usr/share/arangodb3/js"
-var logLevel = "INFO"
-var port = 4000
+var masterPort = 4000
 var rrPath = ""
 var startCoordinator = true
 var startDBserver = true
-var workDir = "./"
+var dataDir = "./"
+var ownAddress = ""
+var masterAddress = ""
+var verbose = false
 
 // Overall state:
 
@@ -77,7 +79,7 @@ func hello(w http.ResponseWriter, r *http.Request) {
 	if state == stateSlave {
 		header := w.Header()
 		header.Add("Location", "http://"+myPeers.Hosts[0]+":"+
-			strconv.Itoa(port)+"/hello")
+			strconv.Itoa(masterPort)+"/hello")
 		w.WriteHeader(http.StatusTemporaryRedirect)
 		return
 	}
@@ -85,7 +87,7 @@ func hello(w http.ResponseWriter, r *http.Request) {
 		myself := findHost(r.Host)
 		myPeers.Hosts = append(myPeers.Hosts, myself)
 		myPeers.PortOffsets = append(myPeers.PortOffsets, 0)
-		myPeers.Directories = append(myPeers.Directories, workDir)
+		myPeers.Directories = append(myPeers.Directories, dataDir)
 		myPeers.AgencySize = agencySize
 		myPeers.MyIndex = 0
 	}
@@ -178,11 +180,11 @@ func makeBaseArgs(myDir string, myAddress string, myPort string,
 		switch mode {
 		// Parameters are: port, server threads, log level, v8-contexts
 		case "agent":
-			fmt.Fprintf(out, confFileTemplate, myPort, 8, logLevel, 1)
+			fmt.Fprintf(out, confFileTemplate, myPort, 8, "INFO", 1)
 		case "dbserver":
-			fmt.Fprintf(out, confFileTemplate, myPort, 4, logLevel, 4)
+			fmt.Fprintf(out, confFileTemplate, myPort, 4, "INFO", 4)
 		case "coordinator":
-			fmt.Fprintf(out, confFileTemplate, myPort, 16, logLevel, 4)
+			fmt.Fprintf(out, confFileTemplate, myPort, 16, "INFO", 4)
 		}
 		out.Close()
 	}
@@ -278,7 +280,7 @@ func startRunning() {
 	}
 	if myPeers.MyIndex < agencySize {
 		myPort = strconv.Itoa(4001 + portOffset)
-		myDir = workDir + "agent" + myPort + string(os.PathSeparator)
+		myDir = dataDir + "agent" + myPort + string(os.PathSeparator)
 		os.MkdirAll(myDir+"data", 0755)
 		os.MkdirAll(myDir+"apps", 0755)
 		args = makeBaseArgs(myDir, myAddress, myPort, "agent")
@@ -294,7 +296,7 @@ func startRunning() {
 	var dbserverProc *os.Process
 	if startDBserver {
 		myPort = strconv.Itoa(8629 + portOffset)
-		myDir = workDir + "dbserver" + myPort + string(os.PathSeparator)
+		myDir = dataDir + "dbserver" + myPort + string(os.PathSeparator)
 		os.MkdirAll(myDir+"data", 0755)
 		os.MkdirAll(myDir+"apps", 0755)
 		args = makeBaseArgs(myDir, myAddress, myPort, "dbserver")
@@ -310,7 +312,7 @@ func startRunning() {
 	var coordinatorProc *os.Process
 	if startCoordinator {
 		myPort = strconv.Itoa(8530 + portOffset)
-		myDir = workDir + "coordinator" + myPort + string(os.PathSeparator)
+		myDir = dataDir + "coordinator" + myPort + string(os.PathSeparator)
 		os.MkdirAll(myDir+"data", 0755)
 		os.MkdirAll(myDir+"apps", 0755)
 		args = makeBaseArgs(myDir, myAddress, myPort, "coordinator")
@@ -343,7 +345,7 @@ func startRunning() {
 }
 
 func saveSetup() {
-	f, e := os.Create(workDir + "setup.json")
+	f, e := os.Create(dataDir + "setup.json")
 	defer f.Close()
 	if e != nil {
 		fmt.Println("Error writing setup:", e)
@@ -359,10 +361,10 @@ func saveSetup() {
 
 func startSlave(peerAddress string) {
 	fmt.Println("Contacting master", peerAddress, "...")
-	b, _ := json.Marshal(peers{Directories: []string{workDir}})
+	b, _ := json.Marshal(peers{Directories: []string{dataDir}})
 	buf := bytes.Buffer{}
 	buf.Write(b)
-	r, e := http.Post("http://"+peerAddress+":"+strconv.Itoa(port)+
+	r, e := http.Post("http://"+peerAddress+":"+strconv.Itoa(masterPort)+
 		"/hello", "application/json", &buf)
 	if e != nil {
 		fmt.Println("Cannot start because of error from master:", e)
@@ -392,7 +394,7 @@ func startSlave(peerAddress string) {
 			return
 		}
 		time.Sleep(1000000000)
-		r, e = http.Get("http://" + myPeers.Hosts[0] + ":" + strconv.Itoa(port) +
+		r, e = http.Get("http://" + myPeers.Hosts[0] + ":" + strconv.Itoa(masterPort) +
 			"/hello")
 		body, e = ioutil.ReadAll(r.Body)
 		r.Body.Close()
@@ -474,11 +476,62 @@ func findExecutable() {
 				arangodJSstartup, _ = filepath.Abs(
 					filepath.FromSlash(filepath.Dir(p) + "/../share/arangodb3/js"))
 			}
-			fmt.Println("Found", arangodExecutable, "as default arangod executable.")
-			fmt.Println("Using", arangodJSstartup, "as default JS dir.")
 			return
 		}
 	}
+}
+
+func usage() {
+	fmt.Printf(`Usage of %s:
+  --dataDir path
+        directory to store all data (default "%s")
+  --join addr
+        join a cluster with master at address addr (default "")
+  --agencySize int
+        number of agents in agency (default %d)
+  --ownAddress addr
+        address under which this server is reachable, needed for 
+        the case of --agencySize 1 in the master
+  --masterPort int
+        port for arangodb master (default %d)
+  --arangod path
+        path to arangod executable (default "%s")
+  --jsDir path
+        path to JS library directory (default "%s")
+  --startCoordinator bool
+        should a coordinator instance be started (default %t)
+  --startDBserver bool
+        should a dbserver instance be started (default %t)
+  --rr path
+        path to rr executable to use if non-empty (default "%s")
+  --verbose bool
+        show more information (default %t)
+	
+`, os.Args[0], dataDir, agencySize, masterPort, arangodExecutable,
+		arangodJSstartup, startCoordinator, startDBserver, rrPath, verbose)
+}
+
+func parseBool(option string, value string) (bool, error) {
+	if value == "true" || value == "1" || value == "yes" || value == "y" ||
+		value == "Y" || value == "YES" || value == "TRUE" || value == "True" {
+		return true, nil
+	}
+	if value == "false" || value == "0" || value == "no" || value == "n" ||
+		value == "N" || value == "NO" || value == "FALSE" || value == "False" {
+		return false, nil
+	}
+	fmt.Println("Option", option, "needs a boolean value (true/false/1/0/yes/no)",
+		"and not", value)
+	return true, errors.New("boolean value expected")
+}
+
+func parseInt(option string, value string) (int64, error) {
+	i, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		fmt.Println("Option", option, "needs an integer value and not", value)
+		return 0, err
+	}
+	return i, nil
 }
 
 func main() {
@@ -486,34 +539,68 @@ func main() {
 	findExecutable()
 
 	// Command line arguments:
-	flag.IntVar(&agencySize, "agencySize", agencySize,
-		"number of agents in agency")
-	flag.IntVar(&port, "port", port, "port for arangodb launcher")
-	flag.StringVar(&workDir, "workDir", workDir, "working directory")
-	flag.StringVar(&arangodExecutable, "arangod", arangodExecutable,
-		"path to arangod executable")
-	flag.StringVar(&arangodJSstartup, "jsdir", arangodJSstartup,
-		"path to JS library directory")
-	flag.BoolVar(&startCoordinator, "coordinator", startCoordinator,
-		"start a coordinator instance")
-	flag.BoolVar(&startDBserver, "dbserver", startDBserver,
-		"start a dbserver instance")
-	flag.StringVar(&rrPath, "rr", rrPath, "path to rr executable to use")
-	flag.StringVar(&logLevel, "loglevel", logLevel,
-		"log level (ERROR, INFO, DEBUG, TRACE)")
-	flag.Parse()
+	for i := 1; i < len(os.Args); i++ {
+		if os.Args[i] == "-h" || os.Args[i] == "--help" {
+			usage()
+			return
+		}
+	}
+	for i := 1; i < len(os.Args)-1; i += 2 {
+		switch os.Args[i] {
+		case "--agencySize":
+			if i, e := parseInt(os.Args[i], os.Args[i+1]); e == nil {
+				agencySize = int(i)
+			}
+		case "--masterPort":
+			if i, e := parseInt(os.Args[i], os.Args[i+1]); e == nil {
+				masterPort = int(i)
+			}
+		case "--dataDir":
+			dataDir = os.Args[i+1]
+		case "--arangod":
+			arangodExecutable = os.Args[i+1]
+		case "--jsDir":
+			arangodJSstartup = os.Args[i+1]
+		case "--startCoordinator":
+			if b, e := parseBool(os.Args[i], os.Args[i+1]); e == nil {
+				startCoordinator = b
+			}
+		case "--startDBserver":
+			if b, e := parseBool(os.Args[i], os.Args[i+1]); e == nil {
+				startDBserver = b
+			}
+		case "--rr":
+			rrPath = os.Args[i+1]
+		case "--ownAddress":
+			ownAddress = os.Args[i+1]
+		case "--join":
+			masterAddress = os.Args[i+1]
+		case "--verbose":
+			if b, e := parseBool(os.Args[i], os.Args[i+1]); e == nil {
+				verbose = b
+			}
+		default:
+			usage()
+			return
+		}
+	}
+
+	if verbose {
+		fmt.Println("Using", arangodExecutable, "as default arangod executable.")
+		fmt.Println("Using", arangodJSstartup, "as default JS dir.")
+	}
 
 	// Sort out work directory:
-	if len(workDir) == 0 {
-		workDir = "./"
+	if len(dataDir) == 0 {
+		dataDir = "./"
 	}
-	workDir, _ = filepath.Abs(workDir)
-	if workDir[len(workDir)-1] != os.PathSeparator {
-		workDir = workDir + string(os.PathSeparator)
+	dataDir, _ = filepath.Abs(dataDir)
+	if dataDir[len(dataDir)-1] != os.PathSeparator {
+		dataDir = dataDir + string(os.PathSeparator)
 	}
-	err := os.MkdirAll(workDir, 0755)
+	err := os.MkdirAll(dataDir, 0755)
 	if err != nil {
-		fmt.Println("Cannot create working directory", workDir, ", giving up.")
+		fmt.Println("Cannot create data directory", dataDir, ", giving up.")
 		return
 	}
 
@@ -524,10 +611,10 @@ func main() {
 
 	// HTTP service:
 	http.HandleFunc("/hello", hello)
-	go http.ListenAndServe("0.0.0.0:"+strconv.Itoa(port), nil)
+	go http.ListenAndServe("0.0.0.0:"+strconv.Itoa(masterPort), nil)
 
 	// Is this a new start or a restart?
-	setupFile, err := os.Open(workDir + "setup.json")
+	setupFile, err := os.Open(dataDir + "setup.json")
 	if err == nil {
 		// Could read file
 		setup, err := ioutil.ReadAll(setupFile)
@@ -543,10 +630,9 @@ func main() {
 	}
 
 	// Do we have to register?
-	args := flag.Args()
-	if len(args) > 0 {
+	if masterAddress != "" {
 		state = stateSlave
-		startSlave(args[0])
+		startSlave(masterAddress)
 	} else {
 		state = stateMaster
 		startMaster()
