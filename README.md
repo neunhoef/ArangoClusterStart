@@ -25,12 +25,12 @@ will use port 4000 to wait for colleagues. On host B: (can be same as A):
 
     arangodb A
 
-will contact A:8529 and register, will send its address B and learn
+will contact A:4000 and register, will send its address B and learn
 port offset 1 if A=B, or 0 if A!=B. On host C: (can be same as A or B):
 
     arangodb A
 
-will contact A:8529 and register, will send its address C and learn
+will contact A:4000 and register, will send its address C and learn
 port offset for C=A or C=B, or 0 if C is new.
 
 From the moment on when 3 have joined, each will fire up an agent, a 
