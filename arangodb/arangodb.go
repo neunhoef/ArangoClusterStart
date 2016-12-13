@@ -430,7 +430,7 @@ func findExecutable() {
 			l, e := d.Readdir(1024)
 			if e == nil {
 				for _, n := range l {
-					if !n.IsDir() {
+					if n.IsDir() {
 						name := n.Name()
 						fmt.Println("Found name", name)
 						if strings.HasPrefix(name, "ArangoDB3 ") {
