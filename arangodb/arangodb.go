@@ -430,6 +430,7 @@ func findExecutable() {
 			l, e := d.Readdir(1024)
 			if e == nil {
 				for _, n := range l {
+					fmt.Println("Found name", n.Name())
 					if !n.IsDir() {
 						name := n.Name()
 						if strings.HasPrefix(name, "ArangoDB3 ") {
@@ -442,6 +443,7 @@ func findExecutable() {
 				fmt.Println("Could not read directory", basePath,
 					"to look for executable.")
 			}
+			d.Close()
 		} else {
 			fmt.Println("Could not open directory", basePath,
 				"to look for executable.")
