@@ -90,7 +90,6 @@ func hello(w http.ResponseWriter, r *http.Request) {
 		var newPeer peers
 		body, _ := ioutil.ReadAll(r.Body)
 		r.Body.Close()
-		//fmt.Println("Received body:", string(body))
 		json.Unmarshal(body, &newPeer)
 		peerDir := newPeer.Directories[0]
 
@@ -145,35 +144,70 @@ func slasher(s string) string {
 	return strings.Replace(s, "\\", "/", -1)
 }
 
+var confFileTemplate = `# ArangoDB configuration file
+#
+# Documentation:
+# https://docs.arangodb.com/Manual/Administration/Configuration/
+#
+
+[server]
+endpoint = tcp://0.0.0.0:%s
+threads = %d
+
+[log]
+level = %s
+
+[javascript]
+v8-contexts = %d
+`
+
 func makeBaseArgs(myDir string, myAddress string, myPort string,
 	mode string) (args []string) {
+
+	confFileName := myDir + "arangod.conf"
+	if _, err := os.Stat(confFileName); os.IsNotExist(err) {
+		out, e := os.Create(confFileName)
+		if e != nil {
+			fmt.Println("Could not create configuration file", confFileName, "error:",
+									e);
+			os.Exit(1)
+		}
+		switch mode {
+		// Parameters are: port, server threads, log level, v8-contexts
+		case "agent":
+			fmt.Fprintf(out, confFileTemplate, myPort, 8, logLevel, 1)
+		case "dbserver":
+			fmt.Fprintf(out, confFileTemplate, myPort, 4, logLevel, 4)
+		case "coordinator":
+			fmt.Fprintf(out, confFileTemplate, myPort, 16, logLevel, 4)
+		}
+		out.Close()
+	}
 	args = make([]string, 0, 40)
 	if rrPath != "" {
 		args = append(args, rrPath)
 	}
 	args = append(args,
 		arangodExecutable,
-		"-c", "none",
-		"--server.endpoint", "tcp://0.0.0.0:"+myPort,
-		"--database.directory", slasher(myDir+"data"),
+		"-c", slasher(confFileName),
+		//"--server.endpoint", "tcp://0.0.0.0:" + myPort,
+		"--database.directory", slasher(myDir + "data"),
 		"--javascript.startup-directory", slasher(arangodJSstartup),
-		"--javascript.app-path", slasher(myDir+"apps"),
-		"--log.file", slasher(myDir+"arangod.log"),
-		"--log.level", logLevel,
+		"--javascript.app-path", slasher(myDir + "apps"),
+		"--log.file", slasher(myDir + "arangod.log"),
+		//"--log.level", logLevel,
 		"--log.force-direct", "false",
 		"--server.authentication", "false",
 	)
 	switch mode {
-	case "agency":
+	case "agent":
 		args = append(args,
 			"--agency.activate", "true",
 			"--agency.my-address", "tcp://"+myAddress+myPort,
 			"--agency.size", strconv.Itoa(agencySize),
 			"--agency.supervision", "true",
 			"--foxx.queues", "false",
-			"--javascript.v8-contexts", "1",
 			"--server.statistics", "false",
-			"--server.threads", "8",
 		)
 		for i := 0; i < agencySize; i++ {
 			if i != myPeers.MyIndex {
@@ -189,7 +223,6 @@ func makeBaseArgs(myDir string, myAddress string, myPort string,
 			"--cluster.my-role", "PRIMARY",
 			"--cluster.my-local-info", myAddress+myPort,
 			"--foxx.queues", "false",
-			"--javascript.v8-contexts", "4",
 			"--server.statistics", "true",
 		)
 	case "coordinator":
@@ -198,12 +231,10 @@ func makeBaseArgs(myDir string, myAddress string, myPort string,
 			"--cluster.my-role", "COORDINATOR",
 			"--cluster.my-local-info", myAddress+myPort,
 			"--foxx.queues", "true",
-			"--javascript.v8-contexts", "4",
 			"--server.statistics", "true",
-			"--server.threads", "16",
 		)
 	}
-	if mode != "agency" {
+	if mode != "agent" {
 		for i := 0; i < agencySize; i++ {
 			args = append(args,
 				"--cluster.agency-endpoint",
@@ -212,6 +243,19 @@ func makeBaseArgs(myDir string, myAddress string, myPort string,
 		}
 	}
 	return
+}
+
+func writeCommand(filename string, executable string, args []string) {
+	if _, err := os.Stat(filename); os.IsNotExist(err) {
+		out, err := os.Create(filename)
+		if err == nil {
+			for _, s := range args {
+				fmt.Fprintf(out, " %s", s)
+			}
+			fmt.Fprintf(out, "\n")
+			out.Close()
+		}
+	}
 }
 
 func startRunning() {
@@ -234,9 +278,10 @@ func startRunning() {
 	if myPeers.MyIndex < agencySize {
 		myPort = strconv.Itoa(4001 + portOffset)
 		myDir = workDir + "agent" + myPort + string(os.PathSeparator)
-		os.MkdirAll(myDir+"data", 0755)
-		os.MkdirAll(myDir+"apps", 0755)
-		args = makeBaseArgs(myDir, myAddress, myPort, "agency")
+		os.MkdirAll(myDir + "data", 0755)
+		os.MkdirAll(myDir + "apps", 0755)
+		args = makeBaseArgs(myDir, myAddress, myPort, "agent")
+		writeCommand(myDir + "arangod_command.txt", executable, args)
 		agentProc, err = os.StartProcess(executable, args,
 			&os.ProcAttr{"", nil, []*os.File{os.Stdin, nil, nil}, nil})
 		if err != nil {
@@ -252,6 +297,7 @@ func startRunning() {
 		os.MkdirAll(myDir+"data", 0755)
 		os.MkdirAll(myDir+"apps", 0755)
 		args = makeBaseArgs(myDir, myAddress, myPort, "dbserver")
+		writeCommand(myDir + "arangod_command.txt", executable, args)
 		dbserverProc, err = os.StartProcess(executable, args,
 			&os.ProcAttr{"", nil, []*os.File{os.Stdin, nil, nil}, nil})
 		if err != nil {
@@ -267,6 +313,7 @@ func startRunning() {
 		os.MkdirAll(myDir+"data", 0755)
 		os.MkdirAll(myDir+"apps", 0755)
 		args = makeBaseArgs(myDir, myAddress, myPort, "coordinator")
+		writeCommand(myDir + "arangod_command.txt", executable, args)
 		coordinatorProc, err = os.StartProcess(executable, args,
 			&os.ProcAttr{"", nil, []*os.File{os.Stdin, nil, nil}, nil})
 		if err != nil {
@@ -322,7 +369,6 @@ func startSlave(peerAddress string) {
 	}
 	body, _ := ioutil.ReadAll(r.Body)
 	r.Body.Close()
-	fmt.Println("Body:", string(body), e)
 	e = json.Unmarshal(body, &myPeers)
 	if e != nil {
 		fmt.Println("Cannot parse body from master:", e)
@@ -345,7 +391,6 @@ func startSlave(peerAddress string) {
 			"/hello")
 		body, e = ioutil.ReadAll(r.Body)
 		r.Body.Close()
-		//fmt.Println("Body2:", string(body), e)
 		var newPeers peers
 		json.Unmarshal(body, &newPeers)
 		myPeers.Hosts = newPeers.Hosts
@@ -423,6 +468,7 @@ func main() {
 		if err == nil {
 			err = json.Unmarshal(setup, &myPeers)
 			if err == nil {
+				fmt.Println("Relaunching service...")
 				startRunning()
 				return
 			}
