@@ -1,4 +1,21 @@
-Starting a cluster:
+Starting an ArangoDB cluster the easy way
+=========================================
+
+Building
+--------
+
+Just do
+
+    cd arangodb
+    go build
+
+and the executable is in `arangodb/arangodb`. You can install it
+anywhere in your path. This program will run on Linux, OSX or Windows.
+
+Starting a cluster
+------------------
+
+Install ArangoDB in the usual way as binary package. Then:
 
 On host A:
 
@@ -25,7 +42,12 @@ If two or more of the `arangodb` instances run on the same machine,
 one has to use the `-workDir` option to let each use a different
 directory.
 
-Options: 
+The `arangodb` program will find the ArangoDB executable and the
+other installation files automatically. If this fails, use the
+`-arangod` and `-jsdir` options described below.
+
+Options 
+-------
 
     -workDir <place for datadirectories>
      Default: .
