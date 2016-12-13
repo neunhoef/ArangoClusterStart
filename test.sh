@@ -17,13 +17,13 @@ testServer() {
 
 rm -rf a b c a.log b.log c.log
 mkdir a b c
-arangodb/arangodb -workDir a >a.log &
+arangodb/arangodb --dataDir a >a.log &
 PID1=$!
 sleep 1
-arangodb/arangodb -workDir b localhost >b.log &
+arangodb/arangodb --dataDir b --join localhost >b.log &
 PID2=$!
 sleep 1
-arangodb/arangodb -workDir c localhost >c.log &
+arangodb/arangodb --dataDir c --join localhost >c.log &
 PID3=$!
 
 testServer 4001
