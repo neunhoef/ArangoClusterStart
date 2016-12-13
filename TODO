@@ -1,10 +1,6 @@
-    Generate and use configuration files
-    write out actual start command
     nicer output, including when cluster is ready
     Use docker image if on Linux
     test in Docker container: Docker in Docker?
-    automatic discovery of installation (find path to executable and library
-      from our own position in the file system)
     Windows Support: testen
     OSX Support: testen
     Documentation

@@ -363,8 +363,12 @@ func startSlave(peerAddress string) {
 	buf.Write(b)
 	r, e := http.Post("http://"+peerAddress+":"+strconv.Itoa(port)+
 		"/hello", "application/json", &buf)
-	if e != nil || r.StatusCode != http.StatusOK {
-		fmt.Println("Cannot start because of error from master:", e, r.StatusCode)
+	if e != nil {
+		fmt.Println("Cannot start because of error from master:", e)
+		return
+	}
+	if r.StatusCode != http.StatusOK {
+		fmt.Println("Cannot start because of HTTP error from master:", r.StatusCode)
 		return
 	}
 	body, _ := ioutil.ReadAll(r.Body)
@@ -433,8 +437,8 @@ func findExecutable() {
 					if n.IsDir() {
 						name := n.Name()
 						if strings.HasPrefix(name, "ArangoDB3 ") ||
-						   strings.HasPrefix(name, "ArangoDB3e ") {
-							foundPaths = append(foundPaths, basePath + "/" + name +
+							strings.HasPrefix(name, "ArangoDB3e ") {
+							foundPaths = append(foundPaths, basePath+"/"+name+
 								"/usr/bin/arangod.exe")
 						}
 					}
