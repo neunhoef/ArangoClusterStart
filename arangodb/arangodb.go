@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -169,7 +171,7 @@ func makeBaseArgs(myDir string, myAddress string, myPort string,
 		out, e := os.Create(confFileName)
 		if e != nil {
 			fmt.Println("Could not create configuration file", confFileName, "error:",
-									e);
+				e)
 			os.Exit(1)
 		}
 		switch mode {
@@ -191,10 +193,10 @@ func makeBaseArgs(myDir string, myAddress string, myPort string,
 		arangodExecutable,
 		"-c", slasher(confFileName),
 		//"--server.endpoint", "tcp://0.0.0.0:" + myPort,
-		"--database.directory", slasher(myDir + "data"),
+		"--database.directory", slasher(myDir+"data"),
 		"--javascript.startup-directory", slasher(arangodJSstartup),
-		"--javascript.app-path", slasher(myDir + "apps"),
-		"--log.file", slasher(myDir + "arangod.log"),
+		"--javascript.app-path", slasher(myDir+"apps"),
+		"--log.file", slasher(myDir+"arangod.log"),
 		//"--log.level", logLevel,
 		"--log.force-direct", "false",
 		"--server.authentication", "false",
@@ -278,10 +280,10 @@ func startRunning() {
 	if myPeers.MyIndex < agencySize {
 		myPort = strconv.Itoa(4001 + portOffset)
 		myDir = workDir + "agent" + myPort + string(os.PathSeparator)
-		os.MkdirAll(myDir + "data", 0755)
-		os.MkdirAll(myDir + "apps", 0755)
+		os.MkdirAll(myDir+"data", 0755)
+		os.MkdirAll(myDir+"apps", 0755)
 		args = makeBaseArgs(myDir, myAddress, myPort, "agent")
-		writeCommand(myDir + "arangod_command.txt", executable, args)
+		writeCommand(myDir+"arangod_command.txt", executable, args)
 		agentProc, err = os.StartProcess(executable, args,
 			&os.ProcAttr{"", nil, []*os.File{os.Stdin, nil, nil}, nil})
 		if err != nil {
@@ -297,7 +299,7 @@ func startRunning() {
 		os.MkdirAll(myDir+"data", 0755)
 		os.MkdirAll(myDir+"apps", 0755)
 		args = makeBaseArgs(myDir, myAddress, myPort, "dbserver")
-		writeCommand(myDir + "arangod_command.txt", executable, args)
+		writeCommand(myDir+"arangod_command.txt", executable, args)
 		dbserverProc, err = os.StartProcess(executable, args,
 			&os.ProcAttr{"", nil, []*os.File{os.Stdin, nil, nil}, nil})
 		if err != nil {
@@ -313,7 +315,7 @@ func startRunning() {
 		os.MkdirAll(myDir+"data", 0755)
 		os.MkdirAll(myDir+"apps", 0755)
 		args = makeBaseArgs(myDir, myAddress, myPort, "coordinator")
-		writeCommand(myDir + "arangod_command.txt", executable, args)
+		writeCommand(myDir+"arangod_command.txt", executable, args)
 		coordinatorProc, err = os.StartProcess(executable, args,
 			&os.ProcAttr{"", nil, []*os.File{os.Stdin, nil, nil}, nil})
 		if err != nil {
@@ -417,7 +419,67 @@ func startMaster() {
 	}
 }
 
+func findExecutable() {
+	var pathList = make([]string, 0, 10)
+	pathList = append(pathList, "build/bin/arangod")
+	switch runtime.GOOS {
+	case "windows":
+		// Look in the default installation location:
+		foundPaths := make([]string, 0, 20)
+		basePath := "C:/Program Files"
+		d, e := os.Open(basePath)
+		if e == nil {
+			l, e := d.Readdir(1024)
+			if e == nil {
+				for _, n := range l {
+					if !n.IsDir() {
+						name := n.Name()
+						if strings.HasPrefix(name, "ArangoDB3 ") {
+							foundPaths = append(foundPaths, basePath+"/"+name+
+								"/usr/bin/arangod.exe")
+						}
+					}
+				}
+			} else {
+				fmt.Println("Could not read directory", basePath,
+					"to look for executable.")
+			}
+		} else {
+			fmt.Println("Could not open directory", basePath,
+				"to look for executable.")
+		}
+		sort.Sort(sort.Reverse(sort.StringSlice(foundPaths)))
+		pathList = append(pathList, foundPaths...)
+	case "darwin":
+		pathList = append(pathList,
+			"/Applications/ArangoDB3-CLI.app/Contents/MacOS/usr/sbin/arangod",
+			"/usr/local/opt/arangodb/sbin/arangod",
+		)
+	case "linux":
+		pathList = append(pathList,
+			"/usr/sbin/arangod",
+		)
+	}
+	for _, p := range pathList {
+		if _, e := os.Stat(filepath.Clean(filepath.FromSlash(p))); e == nil || !os.IsNotExist(e) {
+			arangodExecutable, _ = filepath.Abs(filepath.FromSlash(p))
+			if p == "build/bin/arangod" {
+				arangodJSstartup, _ = filepath.Abs("js")
+			} else {
+				arangodJSstartup, _ = filepath.Abs(
+					filepath.FromSlash(filepath.Dir(p) + "/../share/arangodb3/js"))
+			}
+			fmt.Println("Found", arangodExecutable, "as default arangod executable.")
+			fmt.Println("Using", arangodJSstartup, "as default JS dir.")
+			return
+		}
+	}
+}
+
 func main() {
+	// Find executable and jsdir default in a platform dependent way:
+	findExecutable()
+
 	// Command line arguments:
 	flag.IntVar(&agencySize, "agencySize", agencySize,
 		"number of agents in agency")
