@@ -1,9 +1,10 @@
+Generate and use configuration files
+Use docker image if on Linux
+test in Docker container: Docker in Docker?
 automatic discovery of installation (find path to executable and library
   from our own position in the file system)
-Windows Support
-OSX Support
+Windows Support: testen
+OSX Support: testen
+free port testing?
 SSL
 authentication
-Coordinator with console in window?
-test in Docker container
-free port testing?
