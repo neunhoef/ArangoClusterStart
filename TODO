@@ -1,10 +1,14 @@
-Generate and use configuration files
-Use docker image if on Linux
-test in Docker container: Docker in Docker?
-automatic discovery of installation (find path to executable and library
-  from our own position in the file system)
-Windows Support: testen
-OSX Support: testen
-free port testing?
-SSL
-authentication
+    Generate and use configuration files
+    Use docker image if on Linux
+    test in Docker container: Docker in Docker?
+    automatic discovery of installation (find path to executable and library
+      from our own position in the file system)
+    Windows Support: testen
+    OSX Support: testen
+    Documentation
+    Article
+
+future:
+    free port testing?
+    SSL
+    authentication
