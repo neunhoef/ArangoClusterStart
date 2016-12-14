@@ -51,35 +51,51 @@ Common options
 
 * `--dataDir path`
 
-        directory to store all data (default "./")
+directory to store all data (default "./")
+
 * `--join addr`
 
-        join a cluster with master at address addr (default "")
+join a cluster with master at address addr (default "")
+
 * `--agencySize int`
 
-        number of agents in agency (default 3)
+number of agents in agency (default 3)
+
 * `--ownAddress addr`
 
-        address under which this server is reachable, needed for 
-        the case of `--agencySize 1` in the master
+address under which this server is reachable, needed for 
+the case of `--agencySize 1` in the master
 
 Esoteric options
 ----------------
 
 * `--masterPort int`
-        port for arangodb master (default 4000)
+
+port for arangodb master (default 4000)
+
 * `--arangod path`
-        path to arangod executable (default "/usr/sbin/arangod")
+
+path to arangod executable (default "/usr/sbin/arangod")
+
 * `--jsDir path`
-        path to JS library directory (default "/usr/share/arangodb3/js")
+
+path to JS library directory (default "/usr/share/arangodb3/js")
+
 * `--startCoordinator bool`
-        should a coordinator instance be started (default true)
+
+should a coordinator instance be started (default true)
+
 * `--startDBserver bool`
-        should a dbserver instance be started (default true)
+
+should a dbserver instance be started (default true)
+
 * `--rr path`
-        path to rr executable to use if non-empty (default "")
+
+path to rr executable to use if non-empty (default "")
+
 * `--verbose bool`
-        show more information (default false)
+
+show more information (default false)
 	
 Technical explanation as to what happens
 ----------------------------------------
