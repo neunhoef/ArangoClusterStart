@@ -50,12 +50,16 @@ Common options
 --------------
 
 * `--dataDir path`
+
         directory to store all data (default "./")
 * `--join addr`
+
         join a cluster with master at address addr (default "")
 * `--agencySize int`
+
         number of agents in agency (default 3)
 * `--ownAddress addr`
+
         address under which this server is reachable, needed for 
         the case of `--agencySize 1` in the master
 
