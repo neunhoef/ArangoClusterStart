@@ -697,6 +697,7 @@ func main() {
 		if err == nil {
 			err = json.Unmarshal(setup, &myPeers)
 			if err == nil {
+				agencySize = myPeers.AgencySize
 				fmt.Println("Relaunching service...")
 				startRunning()
 				return
