@@ -78,9 +78,14 @@ func findHost(a string) string {
 func hello(w http.ResponseWriter, r *http.Request) {
 	if state == stateSlave {
 		header := w.Header()
-		header.Add("Location", "http://"+myPeers.Hosts[0]+":"+
-			strconv.Itoa(masterPort)+"/hello")
-		w.WriteHeader(http.StatusTemporaryRedirect)
+		if len(myPeers.Hosts) > 0 {
+			header.Add("Location", "http://"+myPeers.Hosts[0]+":"+
+				strconv.Itoa(masterPort)+"/hello")
+			w.WriteHeader(http.StatusTemporaryRedirect)
+		} else {
+			w.WriteHeader(http.StatusBadRequest)
+			io.WriteString(w, `{"error": "No master known."}`)
+		}
 		return
 	}
 	if len(myPeers.Hosts) == 0 {
@@ -145,8 +150,21 @@ func handleSignal() {
 	}
 }
 
+// For Windows we need to change backslashes to slashes, strangely enough:
 func slasher(s string) string {
 	return strings.Replace(s, "\\", "/", -1)
+}
+
+func testInstance(address string, port int) bool {
+	for i := 0; i < 300; i++ {
+		r, e := http.Get("http://" + address + ":" + strconv.Itoa(port) +
+			"/_api/version")
+		if e == nil && r != nil && r.StatusCode == 200 {
+			return true
+		}
+		time.Sleep(500000000)
+	}
+	return false
 }
 
 var confFileTemplate = `# ArangoDB configuration file
@@ -280,6 +298,7 @@ func startRunning() {
 	}
 	if myPeers.MyIndex < agencySize {
 		myPort = strconv.Itoa(4001 + portOffset)
+		fmt.Println("Starting agent on port", myPort)
 		myDir = dataDir + "agent" + myPort + string(os.PathSeparator)
 		os.MkdirAll(myDir+"data", 0755)
 		os.MkdirAll(myDir+"apps", 0755)
@@ -296,6 +315,7 @@ func startRunning() {
 	var dbserverProc *os.Process
 	if startDBserver {
 		myPort = strconv.Itoa(8629 + portOffset)
+		fmt.Println("Starting DBserver on port", myPort)
 		myDir = dataDir + "dbserver" + myPort + string(os.PathSeparator)
 		os.MkdirAll(myDir+"data", 0755)
 		os.MkdirAll(myDir+"apps", 0755)
@@ -312,6 +332,7 @@ func startRunning() {
 	var coordinatorProc *os.Process
 	if startCoordinator {
 		myPort = strconv.Itoa(8530 + portOffset)
+		fmt.Println("Starting coordinator on port", myPort)
 		myDir = dataDir + "coordinator" + myPort + string(os.PathSeparator)
 		os.MkdirAll(myDir+"data", 0755)
 		os.MkdirAll(myDir+"apps", 0755)
@@ -322,6 +343,26 @@ func startRunning() {
 		if err != nil {
 			fmt.Println("Error whilst starting coordinator:", err)
 		}
+	}
+
+	// Check servers:
+	me := myPeers.MyIndex
+	if me < agencySize {
+		if testInstance(myPeers.Hosts[me], 4001+myPeers.PortOffsets[me]) {
+			fmt.Println("Agent up and running.")
+		} else {
+			fmt.Println("Agent not ready after 5min!")
+		}
+	}
+	if testInstance(myPeers.Hosts[me], 8629+myPeers.PortOffsets[me]) {
+		fmt.Println("DBserver up and running.")
+	} else {
+		fmt.Println("DBserver not ready after 5min!")
+	}
+	if testInstance(myPeers.Hosts[me], 8530+myPeers.PortOffsets[me]) {
+		fmt.Println("Coordinator up and running.")
+	} else {
+		fmt.Println("Coordinator not ready after 5min!")
 	}
 
 	for {
@@ -369,13 +410,16 @@ func startSlave(peerAddress string) {
 	if e != nil {
 		fmt.Println("Cannot start because of error from master:", e)
 		return
-	}
-	if r.StatusCode != http.StatusOK {
+	} else if r.StatusCode != http.StatusOK {
 		fmt.Println("Cannot start because of HTTP error from master:", r.StatusCode)
 		return
 	}
-	body, _ := ioutil.ReadAll(r.Body)
+	body, e := ioutil.ReadAll(r.Body)
 	r.Body.Close()
+	if e != nil {
+		fmt.Println("Cannot start because HTTP response from master was bad:", e)
+		return
+	}
 	e = json.Unmarshal(body, &myPeers)
 	if e != nil {
 		fmt.Println("Cannot parse body from master:", e)
@@ -384,11 +428,17 @@ func startSlave(peerAddress string) {
 	myPeers.MyIndex = len(myPeers.Hosts) - 1
 	agencySize = myPeers.AgencySize
 
+	// HTTP service:
+	http.HandleFunc("/hello", hello)
+	go http.ListenAndServe("0.0.0.0:"+strconv.Itoa(masterPort), nil)
+
 	// Wait until we can start:
-	fmt.Println("Waiting for enough servers to show up...")
+	if agencySize > 1 {
+		fmt.Println("Waiting for", agencySize, "servers to show up...")
+	}
 	for {
 		if len(myPeers.Hosts) >= agencySize {
-			fmt.Println("Starting running service...")
+			fmt.Println("Starting service...")
 			saveSetup()
 			startRunning()
 			return
@@ -406,14 +456,20 @@ func startSlave(peerAddress string) {
 }
 
 func startMaster() {
+	// HTTP service:
+	http.HandleFunc("/hello", hello)
+	go http.ListenAndServe("0.0.0.0:"+strconv.Itoa(masterPort), nil)
 	// Permanent loop:
 	fmt.Println("Serving as master...")
+	if agencySize > 1 {
+		fmt.Println("Waiting for", agencySize, "servers to show up.")
+	}
 	for {
 		time.Sleep(1000000000)
 		select {
 		case <-starter:
 			saveSetup()
-			fmt.Println("Starting running service...")
+			fmt.Println("Starting service...")
 			startRunning()
 			return
 		default:
@@ -545,6 +601,11 @@ func main() {
 			return
 		}
 	}
+	if len(os.Args) == 2 {
+		fmt.Println("Need none or at least two arguments.")
+		usage()
+		return
+	}
 	for i := 1; i < len(os.Args)-1; i += 2 {
 		switch os.Args[i] {
 		case "--agencySize":
@@ -608,10 +669,6 @@ func main() {
 	sigChannel = make(chan os.Signal)
 	signal.Notify(sigChannel, os.Interrupt, syscall.SIGTERM)
 	go handleSignal()
-
-	// HTTP service:
-	http.HandleFunc("/hello", hello)
-	go http.ListenAndServe("0.0.0.0:"+strconv.Itoa(masterPort), nil)
 
 	// Is this a new start or a restart?
 	setupFile, err := os.Open(dataDir + "setup.json")
