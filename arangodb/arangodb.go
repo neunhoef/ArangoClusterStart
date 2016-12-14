@@ -462,7 +462,7 @@ func startMaster() {
 	// Permanent loop:
 	fmt.Println("Serving as master...")
 	if agencySize == 1 {
-    myPeers.Hosts = append(myPeers.Hosts, ownAddress)
+		myPeers.Hosts = append(myPeers.Hosts, ownAddress)
 		myPeers.PortOffsets = append(myPeers.PortOffsets, 0)
 		myPeers.Directories = append(myPeers.Directories, dataDir)
 		myPeers.AgencySize = agencySize
@@ -656,7 +656,7 @@ func main() {
 	}
 
 	// Some plausibility checks:
-	if agencySize % 2 == 0 || agencySize <= 0 {
+	if agencySize%2 == 0 || agencySize <= 0 {
 		fmt.Println("Error: agencySize needs to be a positive, odd number.")
 		return
 	}
