@@ -461,9 +461,18 @@ func startMaster() {
 	go http.ListenAndServe("0.0.0.0:"+strconv.Itoa(masterPort), nil)
 	// Permanent loop:
 	fmt.Println("Serving as master...")
-	if agencySize > 1 {
-		fmt.Println("Waiting for", agencySize, "servers to show up.")
+	if agencySize == 1 {
+    myPeers.Hosts = append(myPeers.Hosts, ownAddress)
+		myPeers.PortOffsets = append(myPeers.PortOffsets, 0)
+		myPeers.Directories = append(myPeers.Directories, dataDir)
+		myPeers.AgencySize = agencySize
+		myPeers.MyIndex = 0
+		saveSetup()
+		fmt.Println("Starting service...")
+		startRunning()
+		return
 	}
+	fmt.Println("Waiting for", agencySize, "servers to show up.")
 	for {
 		time.Sleep(1000000000)
 		select {
@@ -646,6 +655,15 @@ func main() {
 		}
 	}
 
+	// Some plausibility checks:
+	if agencySize % 2 == 0 || agencySize <= 0 {
+		fmt.Println("Error: agencySize needs to be a positive, odd number.")
+		return
+	}
+	if agencySize == 1 && ownAddress == "" {
+		fmt.Println("Error: if agencySize==1, ownAddress must be given.")
+		return
+	}
 	if verbose {
 		fmt.Println("Using", arangodExecutable, "as default arangod executable.")
 		fmt.Println("Using", arangodJSstartup, "as default JS dir.")
