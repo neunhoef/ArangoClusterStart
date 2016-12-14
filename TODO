@@ -1,13 +1,15 @@
     Ctrl-C handling on Windows
     kill -TERM handling on OSX
-    nicer output, including when cluster is ready
-    Use docker image if on Linux
-    test in Docker container: Docker in Docker?
     Windows Support: testen
-    Documentation
+    Documentation: Explain what it does
     Article
 
+Docker:
+    Use docker image if on Linux
+    test in Docker container: Docker in Docker?
+
 future:
+    configurable base ports
     free port testing?
     SSL
     authentication
